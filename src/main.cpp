@@ -1,51 +1,40 @@
 // Reflow Oven PID Control - Refactored and Simplified
 #include <PID_v1.h>
-#include <Adafruit_MAX31856.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 #include <ESP32Servo.h>
-#if FEATHER_S3_REV
-    #include <Adafruit_ST7789.h>
-    #define TFT_CYAN ST77XX_CYAN
-    #define TFT_BLACK ST77XX_BLACK
-    #define TFT_WHITE ST77XX_WHITE
-    #define TFT_GREEN ST77XX_GREEN
-    #define TFT_RED ST77XX_RED
-    #define TFT_ORANGE ST77XX_ORANGE
-    #define FONT_SIZE    1
-    #define DRDY_PIN    15
-    #define OUT_PIN     16
-    #define START_PIN   17
-    #define SERVO_PIN   18
-    // Button pins
-    #define PIN_BUTTON_1 0
-    #define PIN_BUTTON_2 1
-    #define PIN_BUTTON_3 2
-#elif FEATHER_S3_REV_ESPI
-    #include <TFT_eSPI.h>
-    #define FONT_SIZE    1
-    #define DRDY_PIN    15
-    #define OUT_PIN     16
-    #define START_PIN   17
-    #define SERVO_PIN   18
-    // Button pins
-    #define PIN_BUTTON_1 0
-    #define PIN_BUTTON_2 1
-    #define PIN_BUTTON_3 2
-#else
-    #include <TFT_eSPI.h>
-    #define FONT_SIZE    2
-    #define DRDY_PIN    21
-    #define OUT_PIN     16
-    #define START_PIN    4
-    #define SERVO_PIN    1
-    // Button pins
-    #define PIN_BUTTON_1 0
-    #define PIN_BUTTON_2 14
+#include <TFT_eSPI.h>
+#define FONT_SIZE    1
+#define SERVO_PIN   14
+// Button pins
+#define PIN_BUTTON_1 0
+#define PIN_BUTTON_2 1
+#define PIN_BUTTON_3 2
+#define DEBUG        1 // Select 1 for serial output
+#define ONE_WIRE_BUS 8
+
+#define NUM_THERMOS  4 // Number of thermocouples
+#define OUT_1_PIN   15
+#define OUT_1_RES   13 // Resistance in Ohms
+#if (NUM_THERMOS > 1)
+#define OUT_2_PIN   16
+#define OUT_2_RES   13 // Resistance in Ohms
+#endif
+#if (NUM_THERMOS > 2)
+#define OUT_3_PIN   17
+#define OUT_3_RES    8 // Resistance in Ohms
+#endif
+#if (NUM_THERMOS > 3)
+#define OUT_4_PIN   18
+#define OUT_4_RES    8 // Resistance in Ohms
 #endif
 
-#define DEBUG 0 // Select 1 for serial output
-
-
-Adafruit_MAX31856 thermocouple = Adafruit_MAX31856(43,44,18,17);
+// Setup a oneWire instance to communicate with any OneWire devices
+OneWire oneWire(ONE_WIRE_BUS);
+// Pass oneWire reference to Dallas Temperature sensor object
+DallasTemperature sensors(&oneWire);
+DeviceAddress addr;
+double temp[NUM_THERMOS];
 
 Servo doorServo;
 // Published values for SG90 servos; adjust if needed
@@ -69,19 +58,9 @@ PID coolingPID(&currentTemp, &servoOutput, &expectedTemp, 2, 0.1, 1.5, REVERSE);
 
 
 // TFT display
-#if FEATHER_S3_REV
-    Adafruit_ST7789 tft = Adafruit_ST7789(42,40,41);
-    #define GRAPH_HEIGHT 50
-    #define GRAPH_WIDTH 240
-#elif FEATHER_S3_REV_ESPI
-    TFT_eSPI tft = TFT_eSPI();
-    #define GRAPH_HEIGHT 50
-    #define GRAPH_WIDTH 240
-#else
-    TFT_eSPI tft = TFT_eSPI();
-    #define GRAPH_HEIGHT 70
-    #define GRAPH_WIDTH 320
-#endif
+TFT_eSPI tft = TFT_eSPI();
+#define GRAPH_HEIGHT 50
+#define GRAPH_WIDTH 240
 double graphData[GRAPH_WIDTH]; // Array to store pressure values for plotting
 double targetData[GRAPH_WIDTH]; // Array to store pressure values for plotting
 int graphIndex = 0, targetIndex = 0;
@@ -104,17 +83,33 @@ void IRAM_ATTR buttonISR1(){
 
 void IRAM_ATTR buttonISR2(){
     running = 0;
-    analogWrite(OUT_PIN, 0);
+    analogWrite(OUT_1_PIN, 0);
+    #if (NUM_THERMOS > 1)
+    analogWrite(OUT_2_PIN, 0);
+    #endif
+    #if (NUM_THERMOS > 2)
+    analogWrite(OUT_3_PIN, 0);
+    #endif
+    #if (NUM_THERMOS > 3)
+    analogWrite(OUT_4_PIN, 0);
+    #endif
     startFlag = 0;
 }
 
-#if FEATHER_S3_REV || FEATHER_S3_REV_ESPI
 void IRAM_ATTR buttonISR3(){
     running = 0;
-    analogWrite(OUT_PIN, 0);
+    analogWrite(OUT_1_PIN, 0);
+    #if (NUM_THERMOS > 1)
+    analogWrite(OUT_2_PIN, 0);
+    #endif
+    #if (NUM_THERMOS > 2)
+    analogWrite(OUT_3_PIN, 0);
+    #endif
+    #if (NUM_THERMOS > 3)
+    analogWrite(OUT_4_PIN, 0);
+    #endif
     startFlag = 0;
 }
-#endif
 
 // Interpolates the target temperature from the profile
 double getTargetTemp(double timeSec) {
@@ -133,7 +128,17 @@ void startCooling() {
     coolingActive = true;
     coolingStartTime = millis();
     coolingStartTemp = currentTemp;
-    analogWrite(OUT_PIN, 0); // turn off heating
+    // turn off heating
+    analogWrite(OUT_1_PIN, 0);
+    #if (NUM_THERMOS > 1)
+    analogWrite(OUT_2_PIN, 0);
+    #endif
+    #if (NUM_THERMOS > 2)
+    analogWrite(OUT_3_PIN, 0);
+    #endif
+    #if (NUM_THERMOS > 3)
+    analogWrite(OUT_4_PIN, 0);
+    #endif
     Serial.println("Cooling started");
 }
 
@@ -149,39 +154,69 @@ void manageCooling() {
         targetTemp = 0;
         doorServo.write(0); // close door
         delay(25);
-#if DEBUG
+        #if DEBUG
         Serial.println("Cooling complete");
-#endif
+        #endif
     }
+}
+
+void getTempValues(){
+    // Send command to get temperatures
+    sensors.requestTemperatures();
+    currentTemp = 0.0;
+    for (uint8_t s=0; s < NUM_THERMOS; s++){
+        temp[s] = sensors.getTempCByIndex(s);
+        currentTemp += temp[s];
+        #if DEBUG
+        Serial.printf("Thermocouple #%i: %6.3f\n",s,temp[s]);
+        #endif
+    }
+    currentTemp /= NUM_THERMOS;
 }
 
 void setup() {
     Serial.begin(115200);
-    pinMode(OUT_PIN, OUTPUT);
+    pinMode(OUT_1_PIN, OUTPUT);
+    #if (NUM_THERMOS > 1)
+    pinMode(OUT_2_PIN, OUTPUT);
+    #endif
+    #if (NUM_THERMOS > 2)
+    pinMode(OUT_3_PIN, OUTPUT);
+    #endif
+    #if (NUM_THERMOS > 3)
+    pinMode(OUT_4_PIN, OUTPUT);
+    #endif
 
     pinMode(PIN_BUTTON_1, INPUT_PULLUP);
-#if FEATHER_S3_REV || FEATHER_S3_REV_ESPI
     pinMode(PIN_BUTTON_2, INPUT_PULLDOWN);
     pinMode(PIN_BUTTON_3, INPUT_PULLDOWN);
-#else
-    pinMode(PIN_BUTTON_2, INPUT_PULLUP);
-#endif
     // link the button 1 functions.
     attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_1), buttonISR1, RISING);
     // link the button 2 functions.
     attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_2), buttonISR2, RISING);
-#if FEATHER_S3_REV || FEATHER_S3_REV_ESPI
     // link the button 3 functions.
     attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_3), buttonISR3, RISING);
-#endif
 
-    thermocouple.begin();
-    thermocouple.setThermocoupleType(MAX31856_TCTYPE_K);
-    thermocouple.setConversionMode(MAX31856_CONTINUOUS);
+    // Start up the oneWire sensor library
+    sensors.begin();
+    #if DEBUG
+    while(sensors.getDeviceCount() != NUM_THERMOS)
+        Serial.println("Number of detected thermocouples mismatch!");
+    Serial.println("Themocouples detected & initialized.");
+    #endif
 
     ovenPID.SetMode(AUTOMATIC);
     ovenPID.SetOutputLimits(0, 255);  // PWM range
-    analogWrite(OUT_PIN, 0);
+    analogWrite(OUT_1_PIN, 0);
+    #if (NUM_THERMOS > 1)
+    analogWrite(OUT_2_PIN, 0);
+    #endif
+    #if (NUM_THERMOS > 2)
+    analogWrite(OUT_3_PIN, 0);
+    #endif
+    #if (NUM_THERMOS > 3)
+    analogWrite(OUT_4_PIN, 0);
+    #endif
 
     // Allow allocation of all timers
     ESP32PWM::allocateTimer(0);
@@ -197,22 +232,9 @@ void setup() {
     coolingPID.SetOutputLimits(0, 180);  // Servo angle range
 
     // Initialize TFT
-#if FEATHER_S3_REV
-    pinMode(TFT_BACKLITE, OUTPUT);
-    digitalWrite(TFT_BACKLITE, HIGH);
-    tft.init(135,240);
-    #if DEBUG
-        Serial.println("TFT init complete");
-    #endif
-#elif FEATHER_S3_REV_ESPI
     tft.init();
     tft.setTextDatum(TL_DATUM);
     tft.setRotation(3);
-#else
-    tft.init();
-    tft.setTextDatum(TL_DATUM);
-    tft.setRotation(1);
-#endif
     tft.setTextSize(FONT_SIZE);
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -234,7 +256,7 @@ void loop() {
     loopTime = now * 0.001;
 
     // Read current temperature
-    currentTemp = thermocouple.readThermocoupleTemperature();
+    getTempValues();
 
     if (!running && startFlag) {
         startTime = millis();
@@ -254,25 +276,43 @@ void loop() {
 
         // Compute PID and apply output
         ovenPID.Compute();
-        analogWrite(OUT_PIN, (int)heaterPower);
+        analogWrite(OUT_1_PIN, (int)heaterPower);
+        #if (NUM_THERMOS > 1)
+        analogWrite(OUT_2_PIN, (int)heaterPower);
+        #endif
+        #if (NUM_THERMOS > 2)
+        analogWrite(OUT_3_PIN, (int)heaterPower);
+        #endif
+        #if (NUM_THERMOS > 3)
+        analogWrite(OUT_4_PIN, (int)heaterPower);
+        #endif
 
         // End condition
         if (!coolingActive && elapsed >= profile[profileCount - 1][0]) {
             running = false;
             startFlag = false;
-            analogWrite(OUT_PIN, 0);
+            analogWrite(OUT_1_PIN, 0);
+            #if (NUM_THERMOS > 1)
+            analogWrite(OUT_2_PIN, 0);
+            #endif
+            #if (NUM_THERMOS > 2)
+            analogWrite(OUT_3_PIN, 0);
+            #endif
+            #if (NUM_THERMOS > 3)
+            analogWrite(OUT_4_PIN, 0);
+            #endif
             Serial.println("Reflow complete");
             startCooling();
         }
     }
-#if DEBUG
+    #if DEBUG
     // Optional debug output
     Serial.print("Time: "); Serial.print(loopTime);
     Serial.print(" s, dT: "); Serial.print(dT);
     Serial.print(" s, Temp: "); Serial.print(currentTemp);
     Serial.print(" C, Target: "); Serial.print(targetTemp);
     Serial.print(" C, Output: "); Serial.println(heaterPower);
-#endif
+    #endif
 
     for(int i = 1, j = graphIndex; i < GRAPH_WIDTH; i++){
         // Clear and redraw graph area
@@ -303,10 +343,6 @@ void loop() {
     tft.setCursor(0, GRAPH_HEIGHT + 50);
     tft.printf("Target Temp: %13.3f", coolingActive ? expectedTemp : targetTemp);
     tft.setCursor(0, GRAPH_HEIGHT + 70);
-#if FEATHER_S3_REV || FEATHER_S3_REV_ESPI
     tft.printf("Timestamp: %15.3f, %4.3f", loopTime,dT);
-#else
-    tft.printf("Timestamp: %8.3f, %4.3f", loopTime,dT);
-#endif
     // delay(100);
 }
