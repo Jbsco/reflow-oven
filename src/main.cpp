@@ -15,27 +15,28 @@
 
 #define NUM_THERMOS  4 // Number of thermocouples
 #define OUT_1_PIN   15
-#define OUT_1_RES   13 // Resistance in Ohms
+#define OUT_1_RES    8 // Resistance in Ohms
 #if (NUM_THERMOS > 1)
 #define OUT_2_PIN   16
-#define OUT_2_RES   13 // Resistance in Ohms
+#define OUT_2_RES    8 // Resistance in Ohms
 #endif
 #if (NUM_THERMOS > 2)
 #define OUT_3_PIN   17
-#define OUT_3_RES    8 // Resistance in Ohms
+#define OUT_3_RES   13 // Resistance in Ohms
 #endif
 #if (NUM_THERMOS > 3)
 #define OUT_4_PIN   18
-#define OUT_4_RES    8 // Resistance in Ohms
+#define OUT_4_RES   13 // Resistance in Ohms
 #endif
 
 // Setup a oneWire instance to communicate with any OneWire devices
 OneWire oneWire(ONE_WIRE_BUS);
 // Pass oneWire reference to Dallas Temperature sensor object
 DallasTemperature sensors(&oneWire);
-DeviceAddress addr;
+DeviceAddress devices[NUM_THERMOS];
 double temp[NUM_THERMOS];
-SemaphoreHandle_t tempMutex;        // protects access to temperatures[]
+// SemaphoreHandle_t tempMutex; // protects access to temps
+TaskHandle_t getTemps;
 
 Servo doorServo;
 // Published values for SG90 servos; adjust if needed
@@ -113,21 +114,16 @@ void IRAM_ATTR buttonISR3(){
     startFlag = 0;
 }
 
-void TempTask(void* parameter){
+void getTempsTask(void* pvParameters){
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = pdMS_TO_TICKS(100);  // 100 ms
+    const TickType_t xFrequency = pdMS_TO_TICKS(200);
     sensors.setWaitForConversion(false); // Non-blocking request
-    while (true) {
+    while(true){
         sensors.requestTemperatures(); // Start async conversion
         // Wait *exactly* 100ms from last wake
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
-        // lock, read, and update global temps
-        if (xSemaphoreTake(tempMutex, portMAX_DELAY)){
-            for (int i = 0; i < NUM_THERMOS; i++) {
-                temp[i] = sensors.getTempCByIndex(i);
-            }
-            xSemaphoreGive(tempMutex);
-        }
+        for (int i = 0; i < NUM_THERMOS; i++)
+            temp[i] = sensors.getTempC(devices[i]);
     }
 }
 
@@ -163,7 +159,7 @@ void startCooling() {
 }
 
 void manageCooling() {
-    double timeSinceCooling = (millis() - coolingStartTime) / 1000.0;
+    double timeSinceCooling = (millis() - coolingStartTime) * 0.001;
     expectedTemp = coolingStartTemp + coolingRate * timeSinceCooling;
     if (expectedTemp < 0) expectedTemp = 0;
     coolingPID.Compute();
@@ -213,7 +209,6 @@ void setup() {
         Serial.println("Parasitic power mode configured!");
     Serial.println("Normal power mode configured.");
     #endif
-    DeviceAddress devices[NUM_THERMOS];
     for(int i = 0; i < NUM_THERMOS; i++){
         sensors.getAddress(devices[i], i);
         sensors.setResolution(devices[i], 4);
@@ -221,15 +216,14 @@ void setup() {
         Serial.printf("Device %1i located at %i\n",i,devices[i]);
         #endif
     }
-    tempMutex = xSemaphoreCreateMutex();
     xTaskCreatePinnedToCore(
-        TempTask,         // task function
-        "TempTask",       // name
-        4096,             // stack size
-        NULL,             // parameter
-        1,                // priority
-        NULL,             // task handle
-        1                 // core (0 or 1)
+        getTempsTask, // task function
+        "getTempsTask", // name
+        10000, // stack size
+        NULL, // parameter
+        1, // priority
+        &getTemps, // task handle
+        1 // core (0 or 1)
     );
 
     ovenPID.SetMode(AUTOMATIC);
@@ -282,15 +276,15 @@ void loop() {
     dT = now - loopTime;
     loopTime = now;
 
-    if (xSemaphoreTake(tempMutex, portMAX_DELAY)) {
+    // if (xSemaphoreTake(tempMutex, portMAX_DELAY)) {
         currentTemp = 0;
         for (int i = 0; i < NUM_THERMOS; i++){
             Serial.printf("Thermocouple #%i: %6.3f\n",i,temp[i]);
             currentTemp += temp[i];
         }
         currentTemp *= 0.25;
-        xSemaphoreGive(tempMutex);
-    }
+        // xSemaphoreGive(tempMutex);
+    // }
 
     if (!running && startFlag) {
         startTime = millis();
