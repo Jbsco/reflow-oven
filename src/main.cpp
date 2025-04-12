@@ -56,7 +56,7 @@ uint16_t dT = 0;
 PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0, 1, DIRECT);
 
 // Cooling control variables
-float coolingRate = -5.0; // °C/s
+float coolingRate = -3.0; // °C/s
 const float coolingTarget = 30.0; // Target temp to stop cooling
 bool coolingActive = false;
 unsigned long coolingStartTime;
@@ -76,7 +76,7 @@ int graphIndex = 0, targetIndex = 0;
 
 // Reflow profile segments: {time in sec, temp in C}
 const float profile[][2] = {
-  {0, 50}, {1.10, 150}, {2.90, 185}, {3.85, 220}, {4.00, 25}
+  {0, 50}, {11.0, 150}, {29.0, 185}, {38.5, 220}, {40.0, 25}
 };
 const int profileCount = sizeof(profile) / sizeof(profile[0]);
 
@@ -131,6 +131,16 @@ void getTempsTask(void* pvParameters){
         for (int i = 0; i < NUM_THERMOS; i++)
             temp[i] = sensors.getTempC(devices[i]);
     }
+}
+
+uint16_t redBlueScale(float value, float min_val = 0, float max_val = 255) {
+    value = clamp(value, min_val, max_val);
+    float ratio = (value - min_val) / (max_val - min_val);
+
+    uint8_t r = static_cast<uint8_t>(ratio * 255);
+    uint8_t b = static_cast<uint8_t>((1.0f - ratio) * 255);
+
+    return tft.color565(r, 0, b);
 }
 
 // Interpolates the target temperature from the profile
@@ -317,12 +327,10 @@ void setup() {
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setCursor(0, 5);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    // "It's us, ya bois"
-    tft.printf("Prog'd: %18s", "Jake, Josh, Kyle");
+    // "It's me, ya boi"
+    tft.printf("       Programmed by: Jacob Seman");
     tft.setCursor(0, 25);
-    tft.printf("%26s", "ECEN4638 Controls Lab");
-    tft.setCursor(0, 45);
-    tft.printf("%26s", "Spring 2025");
+    tft.printf("  ECEN4638 Controls Lab - Spring 2025");
     // Clear graph data
     memset(graphData, 0, sizeof(graphData));
 }
@@ -419,15 +427,44 @@ void loop() {
     // Display solenoid status
     tft.setCursor(0, GRAPH_HEIGHT + 10);
     tft.setTextColor(startFlag ? TFT_GREEN : coolingActive ? TFT_CYAN : TFT_RED, TFT_BLACK);
-    tft.printf("%14s%12i",coolingActive ? "Servo Angle:  " : "Heater Power: ",coolingActive ? (int)servoOutput : (int)heaterPower);
-    // Display pressure value
+    tft.printf("%14s%6i", coolingActive ? "Servo Angle:  " : "Heater Power: ",
+                          coolingActive ? (int)servoOutput : (int)heaterPower);
+    // Display temperatures
     tft.setCursor(0, GRAPH_HEIGHT + 30);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.printf("Current Temp: %12.3f", currentTemp);
+    tft.printf("Average Temp: %6.3f", currentTemp);
     // Display timestamp and timestep
     tft.setCursor(0, GRAPH_HEIGHT + 50);
-    tft.printf("Target Temp: %13.3f", coolingActive ? expectedTemp : targetTemp);
+    tft.printf("Target Temp: %7.3f", coolingActive ? expectedTemp : targetTemp);
     tft.setCursor(0, GRAPH_HEIGHT + 70);
-    tft.printf("Timestamp: %15.3f, %4.3f", loopTime*0.001,dT*0.001);
-    // delay(100);
+    tft.printf("Timestamp: %9.3f, dT: %4.3f", loopTime*0.001,dT*0.001);
+
+    // Display temp and element values using layout:
+    tft.fillRect(135, GRAPH_HEIGHT + 10, 165, 55, TFT_BLACK);
+    tft.setCursor(135, GRAPH_HEIGHT + 10);
+    tft.setTextColor(redBlueScale((int)elementPower[1]), TFT_BLACK);
+    tft.printf("%  3i", (int)elementPower[1]);
+    tft.setCursor(165, GRAPH_HEIGHT + 10);
+    tft.setTextColor(redBlueScale((int)temp[1], 15, 400), TFT_BLACK);
+    tft.printf("%  5.2f", temp[1]);
+    tft.setCursor(205, GRAPH_HEIGHT + 10);
+    tft.setTextColor(redBlueScale((int)elementPower[2]), TFT_BLACK);
+    tft.printf("%  3i", (int)elementPower[2]);
+
+    tft.setCursor(130, GRAPH_HEIGHT + 30);
+    tft.setTextColor(redBlueScale((int)temp[0], 15, 400), TFT_BLACK);
+    tft.printf("%  5.2f", temp[0]);
+    tft.setCursor(200, GRAPH_HEIGHT + 30);
+    tft.setTextColor(redBlueScale((int)temp[2], 15, 400), TFT_BLACK);
+    tft.printf("%  5.2f", temp[2]);
+
+    tft.setCursor(135, GRAPH_HEIGHT + 50);
+    tft.setTextColor(redBlueScale((int)elementPower[0]), TFT_BLACK);
+    tft.printf("%  3i", (int)elementPower[0]);
+    tft.setCursor(165, GRAPH_HEIGHT + 50);
+    tft.setTextColor(redBlueScale((int)temp[3], 15, 400), TFT_BLACK);
+    tft.printf("%  5.2f", temp[3]);
+    tft.setCursor(205, GRAPH_HEIGHT + 50);
+    tft.setTextColor(redBlueScale((int)elementPower[3]), TFT_BLACK);
+    tft.printf("%  3i", (int)elementPower[3]);
 }
