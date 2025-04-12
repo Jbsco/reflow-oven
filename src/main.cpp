@@ -35,6 +35,8 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 DeviceAddress addr;
 double temp[NUM_THERMOS];
+uint16_t conversionTime = 0;
+bool conversionReady = 0;
 
 Servo doorServo;
 // Published values for SG90 servos; adjust if needed
@@ -42,7 +44,9 @@ int minUs = 550;
 int maxUs = 2350;
 
 // PID control variables
-double currentTemp, targetTemp, heaterPower, elapsed, loopTime, dT = 0;
+double currentTemp, targetTemp, heaterPower, elapsed;
+unsigned long loopTime;
+uint16_t dT = 0;
 PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0, 1, DIRECT);
 
 // Cooling control variables
@@ -161,8 +165,6 @@ void manageCooling() {
 }
 
 void getTempValues(){
-    // Send command to get temperatures
-    sensors.requestTemperatures();
     currentTemp = 0.0;
     for (uint8_t s=0; s < NUM_THERMOS; s++){
         temp[s] = sensors.getTempCByIndex(s);
@@ -171,7 +173,11 @@ void getTempValues(){
         Serial.printf("Thermocouple #%i: %6.3f\n",s,temp[s]);
         #endif
     }
-    currentTemp /= NUM_THERMOS;
+    currentTemp *= 0.25;
+    // Send command to get temperatures for next loop
+    sensors.requestTemperatures();
+    conversionReady = false;
+    conversionTime = 0;
 }
 
 void setup() {
@@ -199,11 +205,23 @@ void setup() {
 
     // Start up the oneWire sensor library
     sensors.begin();
+    sensors.setWaitForConversion(false); // Asynchronous
     #if DEBUG
     while(sensors.getDeviceCount() != NUM_THERMOS)
         Serial.println("Number of detected thermocouples mismatch!");
     Serial.println("Themocouples detected & initialized.");
+    while(sensors.isParasitePowerMode())
+        Serial.println("Parasitic power mode configured!");
+    Serial.println("Normal power mode configured.");
     #endif
+    DeviceAddress devices[NUM_THERMOS];
+    for(int i = 0; i < NUM_THERMOS; i++){
+        sensors.getAddress(devices[i], i);
+        sensors.setResolution(devices[i], 4);
+        #if DEBUG
+        Serial.printf("Device %1i located at %i\n",i,devices[i]);
+        #endif
+    }
 
     ovenPID.SetMode(AUTOMATIC);
     ovenPID.SetOutputLimits(0, 255);  // PWM range
@@ -252,11 +270,13 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
-    dT = now * 0.001 - loopTime;
-    loopTime = now * 0.001;
+    dT = now - loopTime;
+    loopTime = now;
+    conversionTime += dT;
+    if(conversionTime > 300) conversionReady = true;
 
-    // Read current temperature
-    getTempValues();
+    // Read current temperature if conversion delay is complete
+    if (conversionReady) getTempValues();
 
     if (!running && startFlag) {
         startTime = millis();
@@ -270,7 +290,7 @@ void loop() {
     if (coolingActive) {
         manageCooling();
     } else if (running){
-        elapsed = (millis() - startTime) / 1000.0;
+        elapsed = (millis() - startTime) * 0.001;
         // Determine the current setpoint from profile
         targetTemp = getTargetTemp(elapsed);
 
@@ -343,6 +363,6 @@ void loop() {
     tft.setCursor(0, GRAPH_HEIGHT + 50);
     tft.printf("Target Temp: %13.3f", coolingActive ? expectedTemp : targetTemp);
     tft.setCursor(0, GRAPH_HEIGHT + 70);
-    tft.printf("Timestamp: %15.3f, %4.3f", loopTime,dT);
+    tft.printf("Timestamp: %15.3f, %4.3f", loopTime*0.001,dT*0.001);
     // delay(100);
 }
