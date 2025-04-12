@@ -35,8 +35,7 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 DeviceAddress addr;
 double temp[NUM_THERMOS];
-uint16_t conversionTime = 0;
-bool conversionReady = 0;
+SemaphoreHandle_t tempMutex;        // protects access to temperatures[]
 
 Servo doorServo;
 // Published values for SG90 servos; adjust if needed
@@ -59,7 +58,6 @@ double coolingStartTemp;
 // Servo PID variables
 double expectedTemp, servoOutput;
 PID coolingPID(&currentTemp, &servoOutput, &expectedTemp, 2, 0.1, 1.5, REVERSE);
-
 
 // TFT display
 TFT_eSPI tft = TFT_eSPI();
@@ -115,6 +113,24 @@ void IRAM_ATTR buttonISR3(){
     startFlag = 0;
 }
 
+void TempTask(void* parameter){
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xFrequency = pdMS_TO_TICKS(100);  // 100 ms
+    sensors.setWaitForConversion(false); // Non-blocking request
+    while (true) {
+        sensors.requestTemperatures(); // Start async conversion
+        // Wait *exactly* 100ms from last wake
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+        // lock, read, and update global temps
+        if (xSemaphoreTake(tempMutex, portMAX_DELAY)){
+            for (int i = 0; i < NUM_THERMOS; i++) {
+                temp[i] = sensors.getTempCByIndex(i);
+            }
+            xSemaphoreGive(tempMutex);
+        }
+    }
+}
+
 // Interpolates the target temperature from the profile
 double getTargetTemp(double timeSec) {
   for (int i = 1; i < profileCount; i++) {
@@ -164,22 +180,6 @@ void manageCooling() {
     }
 }
 
-void getTempValues(){
-    currentTemp = 0.0;
-    for (uint8_t s=0; s < NUM_THERMOS; s++){
-        temp[s] = sensors.getTempCByIndex(s);
-        currentTemp += temp[s];
-        #if DEBUG
-        Serial.printf("Thermocouple #%i: %6.3f\n",s,temp[s]);
-        #endif
-    }
-    currentTemp *= 0.25;
-    // Send command to get temperatures for next loop
-    sensors.requestTemperatures();
-    conversionReady = false;
-    conversionTime = 0;
-}
-
 void setup() {
     Serial.begin(115200);
     pinMode(OUT_1_PIN, OUTPUT);
@@ -205,7 +205,6 @@ void setup() {
 
     // Start up the oneWire sensor library
     sensors.begin();
-    sensors.setWaitForConversion(false); // Asynchronous
     #if DEBUG
     while(sensors.getDeviceCount() != NUM_THERMOS)
         Serial.println("Number of detected thermocouples mismatch!");
@@ -222,6 +221,16 @@ void setup() {
         Serial.printf("Device %1i located at %i\n",i,devices[i]);
         #endif
     }
+    tempMutex = xSemaphoreCreateMutex();
+    xTaskCreatePinnedToCore(
+        TempTask,         // task function
+        "TempTask",       // name
+        4096,             // stack size
+        NULL,             // parameter
+        1,                // priority
+        NULL,             // task handle
+        1                 // core (0 or 1)
+    );
 
     ovenPID.SetMode(AUTOMATIC);
     ovenPID.SetOutputLimits(0, 255);  // PWM range
@@ -272,11 +281,16 @@ void loop() {
     unsigned long now = millis();
     dT = now - loopTime;
     loopTime = now;
-    conversionTime += dT;
-    if(conversionTime > 300) conversionReady = true;
 
-    // Read current temperature if conversion delay is complete
-    if (conversionReady) getTempValues();
+    if (xSemaphoreTake(tempMutex, portMAX_DELAY)) {
+        currentTemp = 0;
+        for (int i = 0; i < NUM_THERMOS; i++){
+            Serial.printf("Thermocouple #%i: %6.3f\n",i,temp[i]);
+            currentTemp += temp[i];
+        }
+        currentTemp *= 0.25;
+        xSemaphoreGive(tempMutex);
+    }
 
     if (!running && startFlag) {
         startTime = millis();
