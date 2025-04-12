@@ -12,7 +12,7 @@
 #define PIN_BUTTON_3 2
 #define DEBUG        1 // Select 1 for serial output
 #define ONE_WIRE_BUS 8
-#define MAX_CURRENT 20 // Total amp service from breaker
+#define MAX_CURRENT 15 // Total amp service from breaker
 #define NUM_THERMOS  4 // Number of thermocouples
 #define OUT_1_PIN   15
 #define OUT_1_RES    8 // Resistance in Ohms
@@ -38,12 +38,6 @@ float temp[NUM_THERMOS];
 // SemaphoreHandle_t tempMutex; // protects access to temps
 TaskHandle_t getTemps;
 
-// Don't want to include <algorithm.h>
-template <typename T>
-constexpr T clamp(T val, T min_val, T max_val) {
-    return (val < min_val) ? min_val : (val > max_val) ? max_val : val;
-}
-
 Servo doorServo;
 // Published values for SG90 servos; adjust if needed
 int minUs = 550;
@@ -56,8 +50,8 @@ uint16_t dT = 0;
 PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0, 1, DIRECT);
 
 // Cooling control variables
-float coolingRate = -3.0; // °C/s
-const float coolingTarget = 30.0; // Target temp to stop cooling
+float coolingRate = -1.5; // °C/s
+const float coolingTarget = 40.0; // Target temp to stop cooling
 bool coolingActive = false;
 unsigned long coolingStartTime;
 float coolingStartTemp;
@@ -76,13 +70,19 @@ int graphIndex = 0, targetIndex = 0;
 
 // Reflow profile segments: {time in sec, temp in C}
 const float profile[][2] = {
-  {0, 50}, {11.0, 150}, {29.0, 185}, {38.5, 220}, {40.0, 25}
+  {0, 50}, {11.0, 150}, {29.0, 185}, {38.5, 220}//, {40.0, 25}
 };
 const int profileCount = sizeof(profile) / sizeof(profile[0]);
 
 // Timers
 unsigned long startTime;
 bool running = false, startFlag = false;
+
+// Don't want to include <algorithm.h>
+template <typename T>
+constexpr T clamp(T val, T min_val, T max_val) {
+    return (val < min_val) ? min_val : (val > max_val) ? max_val : val;
+}
 
 void IRAM_ATTR buttonISR1(){
     if (not startFlag){
@@ -91,7 +91,18 @@ void IRAM_ATTR buttonISR1(){
 }
 
 void IRAM_ATTR buttonISR2(){
-    running = 0;
+    if(running){
+        running = false;
+        coolingActive = true;
+        heaterPower = 0;
+        targetTemp = 0;
+        for(int i = 0; i <NUM_THERMOS; i++)
+            elementPower[i] = 0;
+        startFlag = false;
+    } else if(coolingActive){
+        coolingActive = false;
+        targetTemp = 0;
+    }
     analogWrite(OUT_1_PIN, 0);
     #if (NUM_THERMOS > 1)
     analogWrite(OUT_2_PIN, 0);
@@ -102,11 +113,21 @@ void IRAM_ATTR buttonISR2(){
     #if (NUM_THERMOS > 3)
     analogWrite(OUT_4_PIN, 0);
     #endif
-    startFlag = 0;
 }
 
 void IRAM_ATTR buttonISR3(){
-    running = 0;
+    if(running){
+        running = false;
+        coolingActive = true;
+        heaterPower = 0;
+        targetTemp = 0;
+        for(int i = 0; i <NUM_THERMOS; i++)
+            elementPower[i] = 0;
+        startFlag = false;
+    } else if(coolingActive){
+        coolingActive = false;
+        targetTemp = 0;
+    }
     analogWrite(OUT_1_PIN, 0);
     #if (NUM_THERMOS > 1)
     analogWrite(OUT_2_PIN, 0);
@@ -117,7 +138,6 @@ void IRAM_ATTR buttonISR3(){
     #if (NUM_THERMOS > 3)
     analogWrite(OUT_4_PIN, 0);
     #endif
-    startFlag = 0;
 }
 
 void getTempsTask(void* pvParameters){
@@ -140,7 +160,7 @@ uint16_t redBlueScale(float value, float min_val = 0, float max_val = 255) {
     uint8_t r = static_cast<uint8_t>(ratio * 255);
     uint8_t b = static_cast<uint8_t>((1.0f - ratio) * 255);
 
-    return tft.color565(r, 0, b);
+    return tft.color565(r, 100, b);
 }
 
 // Interpolates the target temperature from the profile
@@ -383,6 +403,9 @@ void loop() {
         // End condition
         if (!coolingActive && elapsed >= profile[profileCount - 1][0]) {
             running = false;
+            heaterPower = 0;
+            for(int i = 0; i <NUM_THERMOS; i++)
+                elementPower[i] = 0;
             startFlag = false;
             analogWrite(OUT_1_PIN, 0);
             #if (NUM_THERMOS > 1)
@@ -432,7 +455,7 @@ void loop() {
     // Display temperatures
     tft.setCursor(0, GRAPH_HEIGHT + 30);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.printf("Average Temp: %6.3f", currentTemp);
+    tft.printf("Avg Temp: %10.3f", currentTemp);
     // Display timestamp and timestep
     tft.setCursor(0, GRAPH_HEIGHT + 50);
     tft.printf("Target Temp: %7.3f", coolingActive ? expectedTemp : targetTemp);
