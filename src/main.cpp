@@ -219,7 +219,8 @@ void balanceHeaterOutput(){
     const float resistances[4] = {OUT_1_RES, OUT_2_RES, OUT_3_RES, OUT_4_RES};
     const float V = 120.0f;
     const float max_current = MAX_CURRENT;
-    const float balance_k = 0.2f;
+    float balance_k = 0.2f;
+    if(currentTemp > targetTemp) balance_k = 0.1;
 
     // Compute mean temperature
     float T_avg = 0.0f;
