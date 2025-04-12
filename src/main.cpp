@@ -12,7 +12,7 @@
 #define PIN_BUTTON_3 2
 #define DEBUG        1 // Select 1 for serial output
 #define ONE_WIRE_BUS 8
-
+#define MAX_CURRENT 20 // Total amp service from breaker
 #define NUM_THERMOS  4 // Number of thermocouples
 #define OUT_1_PIN   15
 #define OUT_1_RES    8 // Resistance in Ohms
@@ -34,9 +34,15 @@ OneWire oneWire(ONE_WIRE_BUS);
 // Pass oneWire reference to Dallas Temperature sensor object
 DallasTemperature sensors(&oneWire);
 DeviceAddress devices[NUM_THERMOS];
-double temp[NUM_THERMOS];
+float temp[NUM_THERMOS];
 // SemaphoreHandle_t tempMutex; // protects access to temps
 TaskHandle_t getTemps;
+
+// Don't want to include <algorithm.h>
+template <typename T>
+constexpr T clamp(T val, T min_val, T max_val) {
+    return (val < min_val) ? min_val : (val > max_val) ? max_val : val;
+}
 
 Servo doorServo;
 // Published values for SG90 servos; adjust if needed
@@ -44,17 +50,17 @@ int minUs = 550;
 int maxUs = 2350;
 
 // PID control variables
-double currentTemp, targetTemp, heaterPower, elapsed;
+double currentTemp, targetTemp, heaterPower, elementPower[NUM_THERMOS], elapsed;
 unsigned long loopTime;
 uint16_t dT = 0;
 PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0, 1, DIRECT);
 
 // Cooling control variables
-double coolingRate = -5.0; // °C/s
-const double coolingTarget = 30.0; // Target temp to stop cooling
+float coolingRate = -5.0; // °C/s
+const float coolingTarget = 30.0; // Target temp to stop cooling
 bool coolingActive = false;
 unsigned long coolingStartTime;
-double coolingStartTemp;
+float coolingStartTemp;
 
 // Servo PID variables
 double expectedTemp, servoOutput;
@@ -64,12 +70,12 @@ PID coolingPID(&currentTemp, &servoOutput, &expectedTemp, 2, 0.1, 1.5, REVERSE);
 TFT_eSPI tft = TFT_eSPI();
 #define GRAPH_HEIGHT 50
 #define GRAPH_WIDTH 240
-double graphData[GRAPH_WIDTH]; // Array to store pressure values for plotting
-double targetData[GRAPH_WIDTH]; // Array to store pressure values for plotting
+float graphData[GRAPH_WIDTH]; // Array to store pressure values for plotting
+float targetData[GRAPH_WIDTH]; // Array to store pressure values for plotting
 int graphIndex = 0, targetIndex = 0;
 
 // Reflow profile segments: {time in sec, temp in C}
-const double profile[][2] = {
+const float profile[][2] = {
   {0, 50}, {1.10, 150}, {2.90, 185}, {3.85, 220}, {4.00, 25}
 };
 const int profileCount = sizeof(profile) / sizeof(profile[0]);
@@ -120,7 +126,7 @@ void getTempsTask(void* pvParameters){
     sensors.setWaitForConversion(false); // Non-blocking request
     while(true){
         sensors.requestTemperatures(); // Start async conversion
-        // Wait *exactly* 100ms from last wake
+        // Wait *exactly* 200ms from last wake
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
         for (int i = 0; i < NUM_THERMOS; i++)
             temp[i] = sensors.getTempC(devices[i]);
@@ -128,12 +134,12 @@ void getTempsTask(void* pvParameters){
 }
 
 // Interpolates the target temperature from the profile
-double getTargetTemp(double timeSec) {
+float getTargetTemp(float timeSec) {
   for (int i = 1; i < profileCount; i++) {
-    double t0 = profile[i - 1][0], t1 = profile[i][0];
-    double y0 = profile[i - 1][1], y1 = profile[i][1];
+    float t0 = profile[i - 1][0], t1 = profile[i][0];
+    float y0 = profile[i - 1][1], y1 = profile[i][1];
     if (timeSec <= t1) {
-      double slope = (y1 - y0) / (t1 - t0);
+      float slope = (y1 - y0) / (t1 - t0);
       return y0 + slope * (timeSec - t0);
     }
   }
@@ -159,7 +165,7 @@ void startCooling() {
 }
 
 void manageCooling() {
-    double timeSinceCooling = (millis() - coolingStartTime) * 0.001;
+    float timeSinceCooling = (millis() - coolingStartTime) * 0.001;
     expectedTemp = coolingStartTemp + coolingRate * timeSinceCooling;
     if (expectedTemp < 0) expectedTemp = 0;
     coolingPID.Compute();
@@ -174,6 +180,56 @@ void manageCooling() {
         Serial.println("Cooling complete");
         #endif
     }
+}
+
+void balanceHeaterOutput(){
+    // Heater resistances in ohms
+    const float resistances[4] = {OUT_1_RES, OUT_2_RES, OUT_3_RES, OUT_4_RES};
+    const float V = 120.0f;
+    const float max_current = MAX_CURRENT;
+    const float balance_k = 0.2f;
+
+    // Compute mean temperature
+    float T_avg = 0.0f;
+    for (int i = 0; i < 4; ++i)
+        T_avg += temp[i];
+    T_avg /= 4.0f;
+
+    // Sensor pairs influence each heater
+    // Contribution Matrix:
+    const int sensor_pairs[4][2] = {
+        {0, 3}, // Heater 0: between Sensor 0 and 3
+        {0, 1}, // Heater 1: between Sensor 0 and 1
+        {1, 2}, // Heater 2: between Sensor 1 and 2
+        {2, 3}  // Heater 3: between Sensor 2 and 3
+    };
+
+
+    // Adjust PWM around global based on temp difference
+    float raw_pwms[4];
+    for (int i = 0; i < 4; ++i) {
+        float e1 = T_avg - temp[sensor_pairs[i][0]];
+        float e2 = T_avg - temp[sensor_pairs[i][1]];
+        float avg_err = 0.5f * (e1 + e2); // positive = cooler than average
+        float adjusted = heaterPower / 255 + balance_k * avg_err;
+        raw_pwms[i] = clamp(adjusted, 0.0f, 1.0f) ;
+    }
+
+    // Compute current
+    float total_current = 0.0f;
+    for (int i = 0; i < 4; ++i)
+        total_current += V * raw_pwms[i] / resistances[i];
+
+    // If current exceeds max, scale all outputs
+    float scale = (total_current > max_current) ? (max_current / total_current) : 1.0f;
+
+    // Clamp PWM
+    for (int i = 0; i < 4; ++i)
+        elementPower[i] = clamp(raw_pwms[i] * scale, 0.0f, 1.0f) * 255;
+    #if DEBUG
+    for(int i = 0; i < NUM_THERMOS; i++)
+        Serial.printf("Balanced heater %i to %6.3f PWM\n",i,elementPower[i]);
+    #endif
 }
 
 void setup() {
@@ -302,17 +358,18 @@ void loop() {
         // Determine the current setpoint from profile
         targetTemp = getTargetTemp(elapsed);
 
-        // Compute PID and apply output
+        // Compute PID, balance heaters, and apply output
         ovenPID.Compute();
-        analogWrite(OUT_1_PIN, (int)heaterPower);
+        balanceHeaterOutput();
+        analogWrite(OUT_1_PIN, (int)elementPower[0]);
         #if (NUM_THERMOS > 1)
-        analogWrite(OUT_2_PIN, (int)heaterPower);
+        analogWrite(OUT_2_PIN, (int)elementPower[1]);
         #endif
         #if (NUM_THERMOS > 2)
-        analogWrite(OUT_3_PIN, (int)heaterPower);
+        analogWrite(OUT_3_PIN, (int)elementPower[2]);
         #endif
         #if (NUM_THERMOS > 3)
-        analogWrite(OUT_4_PIN, (int)heaterPower);
+        analogWrite(OUT_4_PIN, (int)elementPower[3]);
         #endif
 
         // End condition
@@ -348,8 +405,8 @@ void loop() {
         tft.drawPixel(i - 1, GRAPH_HEIGHT - ((int)(targetData[i] * GRAPH_HEIGHT / profile[3][1])), TFT_BLACK);
     }
     // Update graph data
-    memmove(graphData, graphData + 1, (GRAPH_WIDTH - 1) * sizeof(double));
-    memmove(targetData, targetData + 1, (GRAPH_WIDTH - 1) * sizeof(double));
+    memmove(graphData, graphData + 1, (GRAPH_WIDTH - 1) * sizeof(float));
+    memmove(targetData, targetData + 1, (GRAPH_WIDTH - 1) * sizeof(float));
     graphData[GRAPH_WIDTH - 1] = currentTemp;
     targetData[GRAPH_WIDTH - 1] = coolingActive ? expectedTemp : targetTemp;
     // Draw data
