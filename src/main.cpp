@@ -10,7 +10,7 @@
 #define PIN_BUTTON_1 0
 #define PIN_BUTTON_2 1
 #define PIN_BUTTON_3 2
-#define DEBUG        1 // Select 1 for serial output
+#define DEBUG        0 // Select 1 for serial output
 #define ONE_WIRE_BUS 8
 #define MAX_CURRENT 15 // Total amp service from breaker
 #define NUM_THERMOS  4 // Number of thermocouples
@@ -22,11 +22,11 @@
 #endif
 #if (NUM_THERMOS > 2)
 #define OUT_3_PIN   17
-#define OUT_3_RES   13 // Resistance in Ohms
+#define OUT_3_RES   11 // Resistance in Ohms
 #endif
 #if (NUM_THERMOS > 3)
 #define OUT_4_PIN   18
-#define OUT_4_RES   13 // Resistance in Ohms
+#define OUT_4_RES   11 // Resistance in Ohms
 #endif
 
 // Setup a oneWire instance to communicate with any OneWire devices
@@ -34,7 +34,7 @@ OneWire oneWire(ONE_WIRE_BUS);
 // Pass oneWire reference to Dallas Temperature sensor object
 DallasTemperature sensors(&oneWire);
 DeviceAddress devices[NUM_THERMOS];
-float temp[NUM_THERMOS];
+float temp[NUM_THERMOS], total_current = 0.0, heaterActual;
 // SemaphoreHandle_t tempMutex; // protects access to temps
 TaskHandle_t getTemps;
 
@@ -70,7 +70,7 @@ int graphIndex = 0, targetIndex = 0;
 
 // Reflow profile segments: {time in sec, temp in C}
 const float profile[][2] = {
-  {0, 50}, {11.0, 150}, {29.0, 185}, {38.5, 220}//, {40.0, 25}
+  {0, 50}, {90, 80}, {180, 100}, {360, 120}//, {40.0, 25}
 };
 const int profileCount = sizeof(profile) / sizeof(profile[0]);
 
@@ -103,6 +103,7 @@ void IRAM_ATTR buttonISR2(){
         coolingActive = false;
         targetTemp = 0;
     }
+    total_current = 0;
     analogWrite(OUT_1_PIN, 0);
     #if (NUM_THERMOS > 1)
     analogWrite(OUT_2_PIN, 0);
@@ -128,6 +129,7 @@ void IRAM_ATTR buttonISR3(){
         coolingActive = false;
         targetTemp = 0;
     }
+    total_current = 0;
     analogWrite(OUT_1_PIN, 0);
     #if (NUM_THERMOS > 1)
     analogWrite(OUT_2_PIN, 0);
@@ -246,16 +248,20 @@ void balanceHeaterOutput(){
     }
 
     // Compute current
-    float total_current = 0.0f;
+    float total_current_raw = 0.0f;
     for (int i = 0; i < 4; ++i)
-        total_current += V * raw_pwms[i] / resistances[i];
+        total_current_raw += V * raw_pwms[i] / resistances[i];
 
     // If current exceeds max, scale all outputs
-    float scale = (total_current > max_current) ? (max_current / total_current) : 1.0f;
+    float scale = (total_current_raw > max_current) ? (max_current / total_current_raw) : 1.0f;
 
-    // Clamp PWM
-    for (int i = 0; i < 4; ++i)
+    // Clamp PWM and compute actual avg PWM and current
+    total_current = 0.0;
+    heaterActual = scale * heaterPower;
+    for (int i = 0; i < 4; ++i){
         elementPower[i] = clamp(raw_pwms[i] * scale, 0.0f, 1.0f) * 255;
+        total_current += V * elementPower[i] / (255 * resistances[i]);
+    }
     #if DEBUG
     for(int i = 0; i < NUM_THERMOS; i++)
         Serial.printf("Balanced heater %i to %6.3f PWM\n",i,elementPower[i]);
@@ -404,6 +410,7 @@ void loop() {
         if (!coolingActive && elapsed >= profile[profileCount - 1][0]) {
             running = false;
             heaterPower = 0;
+            total_current = 0;
             for(int i = 0; i <NUM_THERMOS; i++)
                 elementPower[i] = 0;
             startFlag = false;
@@ -452,6 +459,10 @@ void loop() {
     tft.setTextColor(startFlag ? TFT_GREEN : coolingActive ? TFT_CYAN : TFT_RED, TFT_BLACK);
     tft.printf("%14s%6i", coolingActive ? "Servo Angle:  " : "Heater Power: ",
                           coolingActive ? (int)servoOutput : (int)heaterPower);
+    if(!coolingActive && running){
+        tft.setCursor(78, GRAPH_HEIGHT + 10);
+        tft.printf("%3i/",(int)heaterActual);
+    }
     // Display temperatures
     tft.setCursor(0, GRAPH_HEIGHT + 30);
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -460,7 +471,7 @@ void loop() {
     tft.setCursor(0, GRAPH_HEIGHT + 50);
     tft.printf("Target Temp: %7.3f", coolingActive ? expectedTemp : targetTemp);
     tft.setCursor(0, GRAPH_HEIGHT + 70);
-    tft.printf("Timestamp: %9.3f, dT: %4.3f", loopTime*0.001,dT*0.001);
+    tft.printf("Timestamp: %9.3f, dT: %4.3f A: %4.2f", loopTime*0.001,dT*0.001,total_current);
 
     // Display temp and element values using layout:
     tft.fillRect(135, GRAPH_HEIGHT + 10, 165, 55, TFT_BLACK);
