@@ -12,7 +12,7 @@
 #define PIN_BUTTON_3 2
 #define DEBUG        0 // Select 1 for serial output
 #define ONE_WIRE_BUS 8
-#define MAX_CURRENT 15 // Total amp service from breaker
+#define MAX_CURRENT 20 // Total amp service from breaker
 #define NUM_THERMOS  4 // Number of thermocouples
 #define OUT_1_PIN   15
 #define OUT_1_RES    8 // Resistance in Ohms
@@ -22,11 +22,11 @@
 #endif
 #if (NUM_THERMOS > 2)
 #define OUT_3_PIN   17
-#define OUT_3_RES   11 // Resistance in Ohms
+#define OUT_3_RES   13 // Resistance in Ohms
 #endif
 #if (NUM_THERMOS > 3)
 #define OUT_4_PIN   18
-#define OUT_4_RES   11 // Resistance in Ohms
+#define OUT_4_RES   13 // Resistance in Ohms
 #endif
 
 // Setup a oneWire instance to communicate with any OneWire devices
@@ -84,6 +84,30 @@ constexpr T clamp(T val, T min_val, T max_val) {
     return (val < min_val) ? min_val : (val > max_val) ? max_val : val;
 }
 
+void startCooling() {
+    coolingActive = true;
+    coolingStartTime = millis();
+    coolingStartTemp = currentTemp;
+    heaterPower = 0;
+    targetTemp = 0;
+    total_current = 0;
+    for(int i = 0; i <NUM_THERMOS; i++)
+        elementPower[i] = 0;
+    startFlag = false;
+    // turn off heating
+    analogWrite(OUT_1_PIN, 0);
+    #if (NUM_THERMOS > 1)
+    analogWrite(OUT_2_PIN, 0);
+    #endif
+    #if (NUM_THERMOS > 2)
+    analogWrite(OUT_3_PIN, 0);
+    #endif
+    #if (NUM_THERMOS > 3)
+    analogWrite(OUT_4_PIN, 0);
+    #endif
+    Serial.println("Cooling started");
+}
+
 void IRAM_ATTR buttonISR1(){
     if (not startFlag){
         startFlag = 1;
@@ -93,53 +117,43 @@ void IRAM_ATTR buttonISR1(){
 void IRAM_ATTR buttonISR2(){
     if(running){
         running = false;
-        coolingActive = true;
-        heaterPower = 0;
-        targetTemp = 0;
-        for(int i = 0; i <NUM_THERMOS; i++)
-            elementPower[i] = 0;
-        startFlag = false;
+        startCooling();
     } else if(coolingActive){
         coolingActive = false;
         targetTemp = 0;
+        total_current = 0;
+        analogWrite(OUT_1_PIN, 0);
+        #if (NUM_THERMOS > 1)
+        analogWrite(OUT_2_PIN, 0);
+        #endif
+        #if (NUM_THERMOS > 2)
+        analogWrite(OUT_3_PIN, 0);
+        #endif
+        #if (NUM_THERMOS > 3)
+        analogWrite(OUT_4_PIN, 0);
+        #endif
     }
-    total_current = 0;
-    analogWrite(OUT_1_PIN, 0);
-    #if (NUM_THERMOS > 1)
-    analogWrite(OUT_2_PIN, 0);
-    #endif
-    #if (NUM_THERMOS > 2)
-    analogWrite(OUT_3_PIN, 0);
-    #endif
-    #if (NUM_THERMOS > 3)
-    analogWrite(OUT_4_PIN, 0);
-    #endif
 }
 
 void IRAM_ATTR buttonISR3(){
     if(running){
         running = false;
-        coolingActive = true;
-        heaterPower = 0;
-        targetTemp = 0;
-        for(int i = 0; i <NUM_THERMOS; i++)
-            elementPower[i] = 0;
-        startFlag = false;
+        startCooling();
     } else if(coolingActive){
         coolingActive = false;
         targetTemp = 0;
+        total_current = 0;
+        analogWrite(OUT_1_PIN, 0);
+        #if (NUM_THERMOS > 1)
+        analogWrite(OUT_2_PIN, 0);
+        #endif
+        #if (NUM_THERMOS > 2)
+        analogWrite(OUT_3_PIN, 0);
+        #endif
+        #if (NUM_THERMOS > 3)
+        analogWrite(OUT_4_PIN, 0);
+        #endif
     }
-    total_current = 0;
-    analogWrite(OUT_1_PIN, 0);
-    #if (NUM_THERMOS > 1)
-    analogWrite(OUT_2_PIN, 0);
-    #endif
-    #if (NUM_THERMOS > 2)
-    analogWrite(OUT_3_PIN, 0);
-    #endif
-    #if (NUM_THERMOS > 3)
-    analogWrite(OUT_4_PIN, 0);
-    #endif
 }
 
 void getTempsTask(void* pvParameters){
@@ -176,24 +190,6 @@ float getTargetTemp(float timeSec) {
     }
   }
   return profile[profileCount - 1][1];
-}
-
-void startCooling() {
-    coolingActive = true;
-    coolingStartTime = millis();
-    coolingStartTemp = currentTemp;
-    // turn off heating
-    analogWrite(OUT_1_PIN, 0);
-    #if (NUM_THERMOS > 1)
-    analogWrite(OUT_2_PIN, 0);
-    #endif
-    #if (NUM_THERMOS > 2)
-    analogWrite(OUT_3_PIN, 0);
-    #endif
-    #if (NUM_THERMOS > 3)
-    analogWrite(OUT_4_PIN, 0);
-    #endif
-    Serial.println("Cooling started");
 }
 
 void manageCooling() {
@@ -489,7 +485,7 @@ void loop() {
     tft.setCursor(130, GRAPH_HEIGHT + 30);
     tft.setTextColor(redBlueScale((int)temp[0], 15, 400), TFT_BLACK);
     tft.printf("%  5.2f", temp[0]);
-    tft.setCursor(200, GRAPH_HEIGHT + 30);
+    tft.setCursor(195, GRAPH_HEIGHT + 30);
     tft.setTextColor(redBlueScale((int)temp[2], 15, 400), TFT_BLACK);
     tft.printf("%  5.2f", temp[2]);
 
