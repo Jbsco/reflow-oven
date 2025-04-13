@@ -47,7 +47,7 @@ int maxUs = 2350;
 double currentTemp, targetTemp, heaterPower, elementPower[NUM_THERMOS], elapsed;
 unsigned long loopTime;
 uint16_t dT = 0;
-PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0, 1, DIRECT);
+PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0.5, 5, DIRECT);
 
 // Cooling control variables
 float coolingRate = -1.5; // °C/s
@@ -70,7 +70,7 @@ int graphIndex = 0, targetIndex = 0;
 
 // Reflow profile segments: {time in sec, temp in C}
 const float profile[][2] = {
-  {0, 50}, {90, 80}, {180, 100}, {360, 120}//, {40.0, 25}
+  {0, 25}, {30+60, 100}, {120+60, 150}, {150+60, 183}, {210+60, 235},{240+60, 183}  // TS391AX
 };
 const int profileCount = sizeof(profile) / sizeof(profile[0]);
 
