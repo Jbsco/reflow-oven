@@ -247,7 +247,7 @@ void balanceHeaterOutput(){
     // Compute current
     float total_current_raw = 0.0f;
     for (int i = 0; i < 4; ++i)
-        total_current_raw += V * raw_pwms[i] / resistances[i];
+        total_current_raw += 1.25f * V * raw_pwms[i] / resistances[i]; // 125% rule for continuous loads
 
     // If current exceeds max, scale all outputs
     float scale = (total_current_raw > max_current) ? (max_current / total_current_raw) : 1.0f;
@@ -257,7 +257,7 @@ void balanceHeaterOutput(){
     heaterActual = scale * heaterPower;
     for (int i = 0; i < 4; ++i){
         elementPower[i] = clamp(raw_pwms[i] * scale, 0.0f, 1.0f) * 255;
-        total_current += V * elementPower[i] / (255 * resistances[i]);
+        total_current += 1.25f * V * elementPower[i] / (255 * resistances[i]); // 125% rule for continuous loads
     }
     #if DEBUG
     for(int i = 0; i < NUM_THERMOS; i++)
