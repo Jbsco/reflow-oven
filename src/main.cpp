@@ -10,23 +10,23 @@
 #define PIN_BUTTON_1 0
 #define PIN_BUTTON_2 1
 #define PIN_BUTTON_3 2
-#define DEBUG        0 // Select 1 for serial output
+#define DEBUG        1 // Select 1 for serial output
 #define ONE_WIRE_BUS 8
-#define MAX_CURRENT 20 // Total amp service from breaker
+#define MAX_CURRENT 15 // Total amp service from breaker
 #define NUM_THERMOS  4 // Number of thermocouples
 #define OUT_1_PIN   15
-#define OUT_1_RES    8 // Resistance in Ohms
+#define OUT_1_RES    7 // Resistance in Ohms
 #if (NUM_THERMOS > 1)
 #define OUT_2_PIN   16
-#define OUT_2_RES    8 // Resistance in Ohms
+#define OUT_2_RES    7 // Resistance in Ohms
 #endif
 #if (NUM_THERMOS > 2)
 #define OUT_3_PIN   17
-#define OUT_3_RES   13 // Resistance in Ohms
+#define OUT_3_RES   11 // Resistance in Ohms
 #endif
 #if (NUM_THERMOS > 3)
 #define OUT_4_PIN   18
-#define OUT_4_RES   13 // Resistance in Ohms
+#define OUT_4_RES   11 // Resistance in Ohms
 #endif
 
 // Setup a oneWire instance to communicate with any OneWire devices
@@ -70,7 +70,7 @@ int graphIndex = 0, targetIndex = 0;
 
 // Reflow profile segments: {time in sec, temp in C}
 const float profile[][2] = {
-  {0, 25}, {30+60, 100}, {120+60, 150}, {150+60, 183}, {210+60, 235},{240+60, 183}  // TS391AX
+  {0, 25}, {30+60, 100}, {120+60, 150}, {150+60, 183}, {210+60, 235},{240+60+300, 235}  // TS391AX
 };
 const int profileCount = sizeof(profile) / sizeof(profile[0]);
 
@@ -366,8 +366,10 @@ void loop() {
     // if (xSemaphoreTake(tempMutex, portMAX_DELAY)) {
         currentTemp = 0;
         for (int i = 0; i < NUM_THERMOS; i++){
-            Serial.printf("Thermocouple #%i: %6.3f\n",i,temp[i]);
+            #if DEBUG
+            if(running || coolingActive)Serial.printf("Thermocouple #%i: %6.3f\n",i,temp[i]);
             currentTemp += temp[i];
+            #endif
         }
         currentTemp *= 0.25;
         // xSemaphoreGive(tempMutex);
@@ -427,11 +429,11 @@ void loop() {
     }
     #if DEBUG
     // Optional debug output
-    Serial.print("Time: "); Serial.print(loopTime);
-    Serial.print(" s, dT: "); Serial.print(dT);
+    Serial.print("Time: "); Serial.print(loopTime*0.001);
+    Serial.print(" s, dT: "); Serial.print(dT*0.001);
     Serial.print(" s, Temp: "); Serial.print(currentTemp);
-    Serial.print(" C, Target: "); Serial.print(targetTemp);
-    Serial.print(" C, Output: "); Serial.println(heaterPower);
+    Serial.print(" C, Target: "); Serial.print(coolingActive ? expectedTemp : targetTemp);
+    Serial.print(" C, Output: "); Serial.println(coolingActive ? servoOutput : heaterPower);
     #endif
 
     for(int i = 1, j = graphIndex; i < GRAPH_WIDTH; i++){
