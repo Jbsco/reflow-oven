@@ -47,7 +47,7 @@ int maxUs = 2350;
 double currentTemp, targetTemp, heaterPower, elementPower[NUM_THERMOS], elapsed;
 unsigned long loopTime;
 uint16_t dT = 0;
-PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0.5, 5, DIRECT);
+PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 1, 10, DIRECT);
 
 // Cooling control variables
 float coolingRate = -1.5; // °C/s
@@ -64,8 +64,8 @@ PID coolingPID(&currentTemp, &servoOutput, &expectedTemp, 2, 0.1, 1.5, REVERSE);
 TFT_eSPI tft = TFT_eSPI();
 #define GRAPH_HEIGHT 50
 #define GRAPH_WIDTH 240
-float graphData[GRAPH_WIDTH]; // Array to store pressure values for plotting
-float targetData[GRAPH_WIDTH]; // Array to store pressure values for plotting
+float graphData[GRAPH_WIDTH]; // Array to store temp values for plotting
+float targetData[GRAPH_WIDTH]; // Array to store temp values for plotting
 int graphIndex = 0, targetIndex = 0;
 
 // Reflow profile segments: {time in sec, temp in C}

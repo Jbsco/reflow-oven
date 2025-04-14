@@ -39,7 +39,7 @@ for k = 1:length(logFiles)
     [~, maxIdx] = max(target);
     
     % Plot Heating Phase
-    subplot(2,5,k)
+    subplot(2,3,k)
     plot(time, temp, 'r', 'LineWidth', 1.5); hold on;
     plot(time, target, 'k--');
     plot(time, output, 'b:');
