@@ -13,6 +13,8 @@
 Adafruit_MAX31856 thermocouple = Adafruit_MAX31856(9);
 Servo doorServo;
 
+bool doneDone = true;
+
 // PID control variables
 double currentTemp, targetTemp, heaterPower;
 PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0, 1, DIRECT);
@@ -30,7 +32,7 @@ PID coolingPID(&currentTemp, &servoOutput, &expectedTemp, 5, 0.5, 1, REVERSE);
 
 // Reflow profile segments: {time in sec, temp in C}
 const double profile[][2] = {
-  {0, 50}, {110, 150}, {290, 185}, {385, 220}, {400, 25}
+  {0,50}, {800, 220}
 };
 const int profileCount = sizeof(profile) / sizeof(profile[0]);
 
@@ -63,6 +65,7 @@ void setup() {
 void loop() {
   if (!running && digitalRead(START_PIN) == LOW) {
     startTime = millis();
+    doneDone = false;
     running = true;
     Serial.println("Reflow started");
   }
@@ -75,7 +78,7 @@ void loop() {
 
   // If cooling phase is active
   if (coolingActive) {
-    manageCooling();
+    manageCooling(elapsed);
   } else {
     // Determine the current setpoint from profile
     targetTemp = getTargetTemp(elapsed);
@@ -86,7 +89,7 @@ void loop() {
   }
 
   // Check if cooling should begin
-  if (!coolingActive && elapsed >= profile[profileCount - 1][0]) {
+  if (!doneDone && !coolingActive && elapsed >= profile[profileCount - 1][0]) {
     startCooling();
   }
   if (!coolingActive){
@@ -122,14 +125,14 @@ void startCooling() {
   Serial.println("Cooling started");
 }
 
-void manageCooling() {
+void manageCooling(double elapsed) {
   double timeSinceCooling = (millis() - coolingStartTime) / 1000.0;
   expectedTemp = coolingStartTemp + coolingRate * timeSinceCooling;
   if(expectedTemp < 0) expectedTemp = 0;
   coolingPID.Compute();
   doorServo.write((int)servoOutput);
   // Optional debug output
-  Serial.print("Time: "); Serial.print(timeSinceCooling);
+  Serial.print("Time: "); Serial.print(elapsed);
   Serial.print(" s, Temp: "); Serial.print(currentTemp);
   Serial.print(" C, Target: "); Serial.print(expectedTemp);
   Serial.print(" C, Output: "); Serial.println((int)servoOutput);
@@ -140,5 +143,6 @@ void manageCooling() {
     analogWrite(FAN_PIN, 0); // turn off fan
     doorServo.write(15); // close door
     Serial.println("Cooling complete");
+    doneDone = true;
   }
 }
