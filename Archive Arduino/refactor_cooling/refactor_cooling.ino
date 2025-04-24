@@ -2,6 +2,7 @@
 #include <PID_v1.h>
 #include <Adafruit_MAX31856.h>
 #include <Servo.h>
+#include "AVR_PWM.h"
 
 #define DRDY_PIN    5
 #define OUT_PIN     10
@@ -13,11 +14,15 @@
 Adafruit_MAX31856 thermocouple = Adafruit_MAX31856(9);
 Servo doorServo;
 
+AVR_PWM* PWM_Instance;
+float frequency = 500;
+uint32_t dutyCycle;
+
 bool doneDone = true;
 
 // PID control variables
 double currentTemp, targetTemp, heaterPower;
-PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0, 1, DIRECT);
+PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0.1, 1, DIRECT);
 
 // Cooling control variables
 double coolingRate = -1.5; // °C/s
@@ -32,7 +37,8 @@ PID coolingPID(&currentTemp, &servoOutput, &expectedTemp, 5, 0.5, 1, REVERSE);
 
 // Reflow profile segments: {time in sec, temp in C}
 const double profile[][2] = {
-  {0,50}, {800, 220}
+  //{0,50}, {800, 220}
+  {0,50},{400,150},{800,150}
 };
 const int profileCount = sizeof(profile) / sizeof(profile[0]);
 
@@ -42,17 +48,18 @@ bool running = false;
 
 void setup() {
   Serial.begin(9600);
-  pinMode(OUT_PIN, OUTPUT);
+  PWM_Instance = new AVR_PWM(OUT_PIN, frequency, 0);
   pinMode(START_PIN, INPUT_PULLUP);
   pinMode(LOGIC_PIN, OUTPUT);
   pinMode(FAN_PIN, OUTPUT);
+
+  PWM_Instance->setPWM_Int(OUT_PIN, frequency, 0);
 
   thermocouple.begin();
   thermocouple.setThermocoupleType(MAX31856_TCTYPE_K);
 
   ovenPID.SetMode(AUTOMATIC);
   ovenPID.SetOutputLimits(0, 255);  // PWM range
-  analogWrite(OUT_PIN, 0);
 
   doorServo.attach(SERVO_PIN);
   doorServo.write(15); // Start with door closed
@@ -85,7 +92,7 @@ void loop() {
 
     // Compute PID and apply output
     ovenPID.Compute();
-    analogWrite(OUT_PIN, (int)heaterPower);
+    PWM_Instance->setPWM_Int(OUT_PIN, frequency, heaterPower/255);
   }
 
   // Check if cooling should begin
@@ -100,7 +107,7 @@ void loop() {
   Serial.print(" C, Output: "); Serial.println(heaterPower);
   }
 
-  delay(100);
+  //delay(100);
 }
 
 // Interpolates the target temperature from the profile
@@ -121,7 +128,7 @@ void startCooling() {
   coolingStartTime = millis();
   coolingStartTemp = currentTemp;
   analogWrite(FAN_PIN, 255); // turn on fan
-  analogWrite(OUT_PIN, 0); // turn off heating
+  PWM_Instance->setPWM_Int(OUT_PIN, frequency, 0);
   Serial.println("Cooling started");
 }
 

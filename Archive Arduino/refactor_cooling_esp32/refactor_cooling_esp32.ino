@@ -1,27 +1,29 @@
-// Reflow Oven PID Control - Refactored and Simplified
+// Reflow Oven PID Control - Refactored and Simplified with Cooling Servo
 #include <PID_v1.h>
 #include <Adafruit_MAX31856.h>
 #include <ESP32Servo.h>
-#define DRDY_PIN     38
-#define OUT_PIN      18
-#define SERVO_PIN    14
-#define FAN_PIN      12
+
+#define DRDY_PIN  15
+#define OUT_PIN   10
+#define SERVO_PIN 5
+#define FAN_PIN   7
 // Button pins
-#define PIN_BUTTON_1 44
+#define PIN_BUTTON_1 11
 
-Adafruit_MAX31856 thermocouple = Adafruit_MAX31856(11,10,7,1); // CS, DI, DO, CLK
-
+Adafruit_MAX31856 thermocouple = Adafruit_MAX31856(43,44,18,17);
 Servo doorServo;
 
+// Published values for SG90 servos; adjust if needed
+int minUs = 550;
+int maxUs = 2350;
+
 // PID control variables
-double currentTemp, targetTemp, heaterPower, elapsed;
-unsigned long loopTime;
-uint16_t dT = 0;
-PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0.5, 1, DIRECT);
+double currentTemp, targetTemp, heaterPower, elapsed, loopTime, dT = 0;
+PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0, 1, DIRECT);
 
 // Cooling control variables
-double coolingRate = -1.0; // °C/s
-const double coolingTarget = 70.0; // Target temp to stop cooling
+double coolingRate = -5.0; // °C/s
+const double coolingTarget = 30.0; // Target temp to stop cooling
 bool coolingActive = false;
 unsigned long coolingStartTime;
 double coolingStartTemp;
@@ -32,7 +34,8 @@ PID coolingPID(&currentTemp, &servoOutput, &expectedTemp, 2, 0.1, 1.5, REVERSE);
 
 // Reflow profile segments: {time in sec, temp in C}
 const double profile[][2] = {
-  {0, 50}, {400.0, 235}, {800.0, 235}
+  //{0,50}, {800, 220}
+  {0,50},{400,150},{800,150}
 };
 const int profileCount = sizeof(profile) / sizeof(profile[0]);
 
@@ -78,7 +81,6 @@ void manageCooling() {
         running = false;
         targetTemp = 0;
         doorServo.write(0); // close door
-        analogWrite(FAN_PIN, 0);
         delay(25);
         Serial.println("Cooling complete");
     }
@@ -87,11 +89,10 @@ void manageCooling() {
 void setup() {
     Serial.begin(115200);
     pinMode(OUT_PIN, OUTPUT);
-    pinMode(FAN_PIN, OUTPUT);
 
-    pinMode(PIN_BUTTON_1, INPUT_PULLUP);
+    pinMode(PIN_BUTTON_1, INPUT_PULLDOWN);
     // link the button 1 functions.
-    attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_1), buttonISR1, RISING);
+    attachInterrupt(digitalPinToInterrupt(PIN_BUTTON_1), buttonISR1, FALLING);
 
     thermocouple.begin();
     thermocouple.setThermocoupleType(MAX31856_TCTYPE_K);
@@ -100,7 +101,6 @@ void setup() {
     ovenPID.SetMode(AUTOMATIC);
     ovenPID.SetOutputLimits(0, 255);  // PWM range
     analogWrite(OUT_PIN, 0);
-    analogWrite(FAN_PIN, 0);
 
     // Allow allocation of all timers
     ESP32PWM::allocateTimer(0);
@@ -108,7 +108,7 @@ void setup() {
     ESP32PWM::allocateTimer(2);
     ESP32PWM::allocateTimer(3);
     doorServo.setPeriodHertz(50);      // Standard 50hz servo
-    doorServo.attach(SERVO_PIN);
+    doorServo.attach(SERVO_PIN, minUs, maxUs);
     doorServo.write(0); // Start with door closed
     delay(25);
 
@@ -118,8 +118,8 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
-    dT = now - loopTime;
-    loopTime = now;
+    dT = now * 0.001 - loopTime;
+    loopTime = now * 0.001;
 
     // Read current temperature
     currentTemp = thermocouple.readThermocoupleTemperature();
@@ -149,15 +149,13 @@ void loop() {
             startFlag = false;
             analogWrite(OUT_PIN, 0);
             Serial.println("Reflow complete");
-            analogWrite(FAN_PIN, 255);
             startCooling();
         }
     }
     // Optional debug output
-    Serial.printf("Time: %.2f",loopTime*0.001);
-    Serial.printf(" s, dT: %.4f",dT*0.001);
-    Serial.printf(" s, Temp: %.2f",currentTemp);
-    Serial.printf(" C, Target: %.2f",coolingActive ? expectedTemp : targetTemp);
-    Serial.printf(" C, Output: %i\n",coolingActive ? (int)servoOutput : (int)heaterPower);
-    delay(100);
+    Serial.print("Time: "); Serial.print(loopTime);
+    Serial.print(" s, dT: "); Serial.print(dT);
+    Serial.print(" s, Temp: "); Serial.print(currentTemp);
+    Serial.print(" C, Target: "); Serial.print(targetTemp);
+    Serial.print(" C, Output: "); Serial.println(heaterPower);
 }
