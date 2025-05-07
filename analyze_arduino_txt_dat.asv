@@ -41,8 +41,8 @@ for k = 1:length(logFiles)
     output = output(startIndex:end);
     target = target(startIndex:end);
     temp = temp(startIndex:end);
-    time = time(startIndex:end) - time(startIndex);
-  
+    time = time(startIndex:end);
+
     % Find the transition point between heating and cooling
     [~, maxIdx] = max(target);
     
