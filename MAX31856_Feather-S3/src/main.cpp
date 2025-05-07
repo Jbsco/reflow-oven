@@ -20,7 +20,7 @@ uint16_t dT = 0;
 PID ovenPID(&currentTemp, &heaterPower, &targetTemp, 20, 0.5, 1, DIRECT);
 
 // Cooling control variables
-double coolingRate = -1.0; // °C/s
+double coolingRate = -1.0; // °C/s, -1.0C/s is same rate as ChipQuik SMDLTLFP50T3
 const double coolingTarget = 70.0; // Target temp to stop cooling
 bool coolingActive = false;
 unsigned long coolingStartTime;
@@ -32,7 +32,8 @@ PID coolingPID(&currentTemp, &servoOutput, &expectedTemp, 2, 0.1, 1.5, REVERSE);
 
 // Reflow profile segments: {time in sec, temp in C}
 const double profile[][2] = {
-  {0, 50}, {400.0, 235}, {800.0, 235}
+  // {0, 50}, {300.0, 185}, {600.0, 185} // testing profile
+  {0, 25}, {90, 90}, {180, 130}, {210, 138}, {240, 165} // ChipQuik SMDLTLFP50T3
 };
 const int profileCount = sizeof(profile) / sizeof(profile[0]);
 
